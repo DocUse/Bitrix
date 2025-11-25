@@ -2,90 +2,213 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Взять в работу</title>
+  <title>Взять в работу — diag</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <script src="//api.bitrix24.com/api/v1/"></script>
+  <!-- Явно https URL SDK -->
+  <script src="https://api.bitrix24.com/api/v1/"></script>
   <style>
-    body{font-family:Arial,Helvetica,sans-serif;padding:16px}
-    button{padding:10px 14px;font-size:16px}
-    .info{margin:10px 0;color:#333}
+    body{font-family:Arial,Helvetica,sans-serif;padding:12px;background:#fff;color:#111}
+    pre{background:#f5f5f5;border:1px solid #e0e0e0;padding:10px;white-space:pre-wrap}
+    button{padding:10px 14px;font-size:15px;margin-top:8px}
+    .ok{color:green}
+    .err{color:#b00}
+    .small{font-size:13px;color:#555}
   </style>
 </head>
 <body>
-  <h3>Взять в работу</h3>
-  <div class="info" id="info">Получаем данные...</div>
-  <button id="takeBtn" disabled>Взять в работу</button>
+  <h2>Взять в работу — diagnostic</h2>
 
-  <script>
-    // Укажите сюда нужный STATUS_ID вашей воронки,
-    // пример 'NEW' — замените на реальное значение.
-    const TARGET_STATUS_ID = 'Взять в работу';
+  <div id="status">Статус: <span id="statMsg">инициализация...</span></div>
+  <div class="small">URL страницы: <span id="url"></span></div>
 
-    function log(msg){ document.getElementById('info').innerText = msg; }
+  <h4>Вывод:</h4>
+  <pre id="out">ожидание...</pre>
 
-    BX24.init(function(){
-      log('Инициализация...');
+  <div style="margin-top:12px">
+    <button id="btnTest" disabled>Тест: показать context & вызвать user.current</button>
+    <button id="btnTake" disabled>Выполнить: назначить меня ответственным (тест)</button>
+  </div>
 
-      // Получаем контекст placement
-      BX24.placement.info(function(context){
-        const opts = context && (context.PLACEMENT_OPTIONS || context.placementOptions || {});
-        const id = opts.id || opts.ID || opts.entityId || opts.ENTITY_ID || null;
+<script>
+  // Поставь сюда реальный STATUS_ID вашей воронки
+  const TARGET_STATUS_ID = 'NEW'; // <-- ЗАМЕНИ на реальный код стадии (пример)
 
-        if(!id){
-          log('Не найден ID лида в PLACEMENT_OPTIONS. Откройте консоль для context.');
-          console.log('placement context:', context);
+  const out = document.getElementById('out');
+  const stat = document.getElementById('statMsg');
+  const urlSpan = document.getElementById('url');
+  const btnTest = document.getElementById('btnTest');
+  const btnTake = document.getElementById('btnTake');
+
+  function show(msg){
+    console.log(msg);
+    out.innerText = (out.innerText ? out.innerText + "\n\n" : "") + String(msg);
+  }
+  function setStatus(t){ stat.innerText = t; }
+
+  // Покажем текущий URL
+  urlSpan.innerText = location.href;
+
+  // Перехват ошибок чтобы они не терялись
+  window.addEventListener('error', function(e){
+    setStatus('Ошибка JS');
+    show('[window.error] ' + (e && e.message) + ' at ' + (e && e.filename) + ':' + (e && e.lineno));
+  });
+
+  window.addEventListener('unhandledrejection', function(e){
+    setStatus('Unhandled promise rejection');
+    show('[unhandledrejection] ' + JSON.stringify(e.reason));
+  });
+
+  // Время ожидания наличия BX24
+  const BX_WAIT_MS = 4000;
+  let bxReady = false;
+
+  function enableButtons(){
+    btnTest.disabled = false;
+    btnTake.disabled = false;
+  }
+
+  // Если BX24 доступен — инициализируем
+  function initBx(){
+    if(typeof BX24 === 'undefined'){
+      show('BX24 SDK не обнаружен (нет глобального BX24). Возможно скрипт не загрузился.');
+      // но кнопки оставляем доступными для ручной проверки
+      setStatus('BX24 не найден');
+      return;
+    }
+
+    setStatus('BX24 найден. Инициализация SDK...');
+    try{
+      BX24.init(function(){
+        bxReady = true;
+        setStatus('BX24 инициализирован. Готово.');
+        show('BX24.init callback выполнен.');
+        enableButtons();
+
+        // Попробуем получить placement info сразу
+        try {
+          BX24.placement.info(function(ctx){
+            show('placement.info() => ' + JSON.stringify(ctx, null, 2));
+            // Выведем возможные места где лежит id
+            const opts = ctx && (ctx.PLACEMENT_OPTIONS || ctx.placementOptions || {});
+            show('PLACEMENT_OPTIONS: ' + JSON.stringify(opts || {}, null, 2));
+            // Если есть id — покажем возможность его использовать
+            const id = opts && (opts.id || opts.ID || opts.entityId || opts.ENTITY_ID || opts.element_id || opts.leadId);
+            if(id) {
+              show('Найден ID сущности: ' + id);
+              btnTest.dataset.leadId = id;
+              btnTake.dataset.leadId = id;
+            } else {
+              show('ID сущности в PLACEMENT_OPTIONS не найден — возможно Bitrix не передаёт его в этом месте.');
+            }
+          });
+        } catch(e){
+          show('Ошибка при вызове BX24.placement.info(): ' + e);
+        }
+      });
+    } catch(e){
+      setStatus('Ошибка BX24.init');
+      show('Ошибка при BX24.init: ' + e);
+    }
+  }
+
+  // Подождём немного, затем попробуем инициализировать
+  setTimeout(function(){
+    initBx();
+  }, 300);
+
+  // Если BX24 не появился — через 4s напомним
+  setTimeout(function(){
+    if(!bxReady){
+      show('BX24 не инициализирован в течение ' + (BX_WAIT_MS/1000) + 's. Если вы открыли страницу вне Bitrix — SDK может быть недоступен.');
+      setStatus('BX24 неинициализирован');
+      // всё равно включим тестовые кнопки чтобы можно было вручную смотреть GET-параметры
+      btnTest.disabled = false;
+    }
+  }, BX_WAIT_MS);
+
+  // Кнопка теста: покажет query params и вызовет user.current (если возможно)
+  btnTest.addEventListener('click', function(){
+    show('--- Начинаем тест ---');
+    show('location.search: ' + location.search);
+    const params = {};
+    location.search.replace(/^\?/, '').split('&').forEach(function(p){
+      if(!p) return;
+      const kv = p.split('=');
+      params[decodeURIComponent(kv[0])] = decodeURIComponent((kv[1]||''));
+    });
+    show('Query params: ' + JSON.stringify(params, null, 2));
+
+    if(typeof BX24 !== 'undefined' && BX24.callMethod){
+      BX24.callMethod('user.current', {}, function(res){
+        if(res.error()){
+          show('user.current error: ' + JSON.stringify(res.error(), null, 2));
           return;
         }
+        show('user.current => ' + JSON.stringify(res.data(), null, 2));
+      });
 
-        log('Лид ID=' + id);
-        const leadId = id;
-        const btn = document.getElementById('takeBtn');
-        btn.disabled = false;
+      // Если есть leadId в data-attribute — получаем lead
+      const leadId = btnTest.dataset.leadId;
+      if(leadId){
+        BX24.callMethod('crm.lead.get', {id: leadId}, function(r){
+          if(r.error()){
+            show('crm.lead.get error: ' + JSON.stringify(r.error(), null, 2));
+            return;
+          }
+          show('crm.lead.get => ' + JSON.stringify(r.data(), null, 2));
+        });
+      } else {
+        show('leadId не передан в кнопке — невозможно вызвать crm.lead.get');
+      }
+    } else {
+      show('BX24.callMethod недоступен, пропущен вызов user.current');
+    }
+  });
 
-        btn.onclick = function(){
-          btn.disabled = true;
-          log('Определяем текущего пользователя...');
-          BX24.callMethod('user.current', {}, function(resUser){
-            if(resUser.error()){
-              console.error(resUser);
-              log('Ошибка user.current: ' + resUser.error());
-              btn.disabled = false;
-              return;
-            }
-            const user = resUser.data();
-            const userId = user && user.ID;
-            if(!userId){
-              log('Не удалось получить ID пользователя');
-              btn.disabled = false;
-              return;
-            }
+  // Кнопка выполнения — назначаем ответственным и меняем статус
+  btnTake.addEventListener('click', function(){
+    const leadId = btnTake.dataset.leadId;
+    if(!leadId){
+      show('Нет leadId, операция отменена.');
+      return;
+    }
+    if(typeof BX24 === 'undefined' || !BX24.callMethod){
+      show('BX24 недоступен, операция отменена.');
+      return;
+    }
 
-            log('Назначаем ответственного и меняем стадию...');
-            BX24.callMethod(
-              'crm.lead.update',
-              {
-                id: leadId,
-                fields: {
-                  ASSIGNED_BY_ID: userId,
-                  STATUS_ID: TARGET_STATUS_ID
-                }
-              },
-              function(res){
-                if(res.error()){
-                  console.error(res);
-                  log('Ошибка обновления: ' + (res.error() || JSON.stringify(res)));
-                  btn.disabled = false;
-                  return;
-                }
-                log('Готово. Лид обновлён.');
-                try{ BX24.closeWindow(); }catch(e){}
-                try{ BX24.placement.call('reload'); }catch(e){}
-              }
-            );
-          });
-        };
+    setStatus('Выполняется назначение...');
+    BX24.callMethod('user.current', {}, function(resUser){
+      if(resUser.error()){
+        show('user.current error: ' + JSON.stringify(resUser.error(), null, 2));
+        return;
+      }
+      const user = resUser.data();
+      const userId = user && user.ID;
+      show('Получен пользователь: ' + JSON.stringify(user, null, 2));
+
+      // Внимание: STATUS_ID должен быть реальным кодом стадии, а не название.
+      show('Выполняем crm.lead.update с ASSIGNED_BY_ID=' + userId + ' и STATUS_ID=' + TARGET_STATUS_ID);
+      BX24.callMethod('crm.lead.update', {
+        id: leadId,
+        fields: {
+          ASSIGNED_BY_ID: userId,
+          STATUS_ID: TARGET_STATUS_ID
+        }
+      }, function(r){
+        if(r.error()){
+          show('crm.lead.update error: ' + JSON.stringify(r.error(), null, 2));
+          setStatus('Ошибка при обновлении');
+          return;
+        }
+        show('crm.lead.update success: ' + JSON.stringify(r.data(), null, 2));
+        setStatus('Готово');
+        try { BX24.closeWindow(); } catch(e){ show('closeWindow error: ' + e); }
       });
     });
-  </script>
+  });
+
+</script>
 </body>
 </html>
