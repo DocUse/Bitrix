@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Взять в работу</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="//api.bitrix24.com/api/v1/"></script>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:16px}
+    button{padding:10px 14px;font-size:16px}
+    .info{margin:10px 0;color:#333}
+  </style>
+</head>
+<body>
+  <h3>Взять в работу</h3>
+  <div class="info" id="info">Получаем данные...</div>
+  <button id="takeBtn" disabled>Взять в работу</button>
+
+  <script>
+    // Укажите сюда нужный STATUS_ID вашей воронки,
+    // пример 'NEW' — замените на реальное значение.
+    const TARGET_STATUS_ID = 'NEW';
+
+    function log(msg){ document.getElementById('info').innerText = msg; }
+
+    BX24.init(function(){
+      log('Инициализация...');
+
+      // Получаем контекст placement
+      BX24.placement.info(function(context){
+        const opts = context && (context.PLACEMENT_OPTIONS || context.placementOptions || {});
+        const id = opts.id || opts.ID || opts.entityId || opts.ENTITY_ID || null;
+
+        if(!id){
+          log('Не найден ID лида в PLACEMENT_OPTIONS. Откройте консоль для context.');
+          console.log('placement context:', context);
+          return;
+        }
+
+        log('Лид ID=' + id);
+        const leadId = id;
+        const btn = document.getElementById('takeBtn');
+        btn.disabled = false;
+
+        btn.onclick = function(){
+          btn.disabled = true;
+          log('Определяем текущего пользователя...');
+          BX24.callMethod('user.current', {}, function(resUser){
+            if(resUser.error()){
+              console.error(resUser);
+              log('Ошибка user.current: ' + resUser.error());
+              btn.disabled = false;
+              return;
+            }
+            const user = resUser.data();
+            const userId = user && user.ID;
+            if(!userId){
+              log('Не удалось получить ID пользователя');
+              btn.disabled = false;
+              return;
+            }
+
+            log('Назначаем ответственного и меняем стадию...');
+            BX24.callMethod(
+              'crm.lead.update',
+              {
+                id: leadId,
+                fields: {
+                  ASSIGNED_BY_ID: userId,
+                  STATUS_ID: TARGET_STATUS_ID
+                }
+              },
+              function(res){
+                if(res.error()){
+                  console.error(res);
+                  log('Ошибка обновления: ' + (res.error() || JSON.stringify(res)));
+                  btn.disabled = false;
+                  return;
+                }
+                log('Готово. Лид обновлён.');
+                try{ BX24.closeWindow(); }catch(e){}
+                try{ BX24.placement.call('reload'); }catch(e){}
+              }
+            );
+          });
+        };
+      });
+    });
+  </script>
+</body>
+</html>
